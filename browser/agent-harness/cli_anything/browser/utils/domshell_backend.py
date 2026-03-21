@@ -27,6 +27,7 @@ DEFAULT_SERVER_ARGS = ["@apireno/domshell"]
 _daemon_session: Optional[ClientSession] = None
 _daemon_read: Optional[Any] = None
 _daemon_write: Optional[Any] = None
+_daemon_client_context: Optional[Any] = None  # Store stdio_client context manager
 
 
 def _check_npx() -> bool:
@@ -145,7 +146,7 @@ async def _start_daemon() -> bool:
     Raises:
         RuntimeError: If daemon fails to start
     """
-    global _daemon_session, _daemon_read, _daemon_write
+    global _daemon_session, _daemon_read, _daemon_write, _daemon_client_context
 
     if _daemon_session is not None:
         return True  # Already running
@@ -156,7 +157,9 @@ async def _start_daemon() -> bool:
     )
 
     try:
-        _daemon_read, _daemon_write = await stdio_client(server_params).__aenter__()
+        # Store the context manager so we can properly clean it up later
+        _daemon_client_context = stdio_client(server_params)
+        _daemon_read, _daemon_write = await _daemon_client_context.__aenter__()
         _daemon_session = ClientSession(_daemon_read, _daemon_write)
         await _daemon_session.__aenter__()
         await _daemon_session.initialize()
@@ -165,28 +168,28 @@ async def _start_daemon() -> bool:
         _daemon_session = None
         _daemon_read = None
         _daemon_write = None
+        _daemon_client_context = None
         raise RuntimeError(f"Failed to start DOMShell daemon: {e}") from e
 
 
 async def _stop_daemon() -> None:
     """Stop persistent daemon mode."""
-    global _daemon_session, _daemon_read, _daemon_write
+    global _daemon_session, _daemon_read, _daemon_write, _daemon_client_context
 
     if _daemon_session is None:
         return
 
     try:
         await _daemon_session.__aexit__(None, None, None)
-        if _daemon_read and _daemon_write:
-            await stdio_client(
-                StdioServerParameters(command=DEFAULT_SERVER_CMD, args=DEFAULT_SERVER_ARGS)
-            ).__aexit__(None, None, None)
+        if _daemon_client_context:
+            await _daemon_client_context.__aexit__(None, None, None)
     except Exception:
         pass  # Ignore cleanup errors
     finally:
         _daemon_session = None
         _daemon_read = None
         _daemon_write = None
+        _daemon_client_context = None
 
 
 def daemon_started() -> bool:
