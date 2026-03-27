@@ -524,7 +524,8 @@ def resolve_attachment_real_path(item: dict[str, Any], data_dir: Path | str) -> 
         parsed = urlparse(raw_path)
         decoded_path = unquote(parsed.path)
         if parsed.netloc and parsed.netloc.lower() != "localhost":
-            unc_path = f"\\\\{parsed.netloc}{decoded_path.replace('/', '\\')}"
+            normalized_unc_path = decoded_path.replace("/", "\\")
+            unc_path = f"\\\\{parsed.netloc}{normalized_unc_path}"
             return str(PureWindowsPath(unc_path))
         if re.match(r"^/[A-Za-z]:", decoded_path):
             return str(PureWindowsPath(decoded_path.lstrip("/")))

@@ -5,6 +5,7 @@ SKILL.md Generator for CLI-Anything harnesses.
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,49 +76,73 @@ def extract_version_from_setup(setup_path: Path) -> str:
     return match.group(1) if match else "1.0.0"
 
 
+def _string_literal(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _click_decorator_info(decorator: ast.AST) -> tuple[str | None, str | None, str | None]:
+    target: ast.AST
+    explicit_name: str | None = None
+    if isinstance(decorator, ast.Call):
+        target = decorator.func
+        if decorator.args:
+            explicit_name = _string_literal(decorator.args[0])
+        if explicit_name is None:
+            for keyword in decorator.keywords:
+                if keyword.arg == "name":
+                    explicit_name = _string_literal(keyword.value)
+                    break
+    else:
+        target = decorator
+    if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+        return target.value.id, target.attr, explicit_name
+    return None, None, explicit_name
+
+
+def _default_group_name(function_name: str) -> str:
+    return re.sub(r"_group$", "", function_name).replace("_", " ")
+
+
+def _default_command_name(function_name: str) -> str:
+    return re.sub(r"_command$", "", function_name).replace("_", "-")
+
+
 def extract_commands_from_cli(cli_path: Path) -> list[CommandGroup]:
-    content = cli_path.read_text(encoding="utf-8")
+    module = ast.parse(cli_path.read_text(encoding="utf-8"), filename=str(cli_path))
     groups: list[CommandGroup] = []
     group_name_by_function: dict[str, str] = {}
+    group_by_display_name: dict[str, CommandGroup] = {}
+    functions = [node for node in module.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
 
-    group_pattern = (
-        r'@cli\.group(?:\(([^)]*)\))?'
-        r'(?:\s*@[\w.]+(?:\([^)]*\))?)*'
-        r'\s*def\s+(\w+)\([^)]*\)'
-        r'(?:\s*->\s*[^:]+)?'
-        r':\s*'
-        r'(?:"""([\s\S]*?)"""|\'\'\'([\s\S]*?)\'\'\')?'
-    )
-    for match in re.finditer(group_pattern, content):
-        decorator_args = match.group(1) or ""
-        func_name = match.group(2)
-        doc = (match.group(3) or match.group(4) or "").strip()
-        explicit_name = re.search(r'["\']([^"\']+)["\']', decorator_args)
-        name = explicit_name.group(1) if explicit_name else func_name.replace("_", " ")
-        display_name = name.replace("-", " ").title()
-        group_name_by_function[func_name] = display_name
-        groups.append(CommandGroup(name=display_name, description=doc or f"Commands for {name}."))
+    for node in functions:
+        for decorator in node.decorator_list:
+            owner_name, decorator_name, explicit_name = _click_decorator_info(decorator)
+            if owner_name != "cli" or decorator_name != "group":
+                continue
+            raw_name = explicit_name or _default_group_name(node.name)
+            display_name = raw_name.replace("-", " ").title()
+            group = CommandGroup(
+                name=display_name,
+                description=ast.get_docstring(node) or f"Commands for {raw_name}.",
+            )
+            group_name_by_function[node.name] = display_name
+            group_by_display_name[display_name] = group
+            groups.append(group)
+            break
 
-    command_pattern = (
-        r'@(\w+)\.command(?:\(([^)]*)\))?'
-        r'(?:\s*@[\w.]+(?:\([^)]*\))?)*'
-        r'\s*def\s+(\w+)\([^)]*\)'
-        r'(?:\s*->\s*[^:]+)?'
-        r':\s*'
-        r'(?:"""([\s\S]*?)"""|\'\'\'([\s\S]*?)\'\'\')?'
-    )
-    for match in re.finditer(command_pattern, content):
-        group_func = match.group(1)
-        decorator_args = match.group(2) or ""
-        func_name = match.group(3)
-        doc = (match.group(4) or match.group(5) or "").strip()
-        explicit_name = re.search(r'["\']([^"\']+)["\']', decorator_args)
-        cmd_name = explicit_name.group(1) if explicit_name else func_name.replace("_", "-")
-        title = group_name_by_function.get(group_func, group_func.replace("_", " ").replace("-", " ").title())
-        for group in groups:
-            if group.name == title:
-                group.commands.append(CommandInfo(cmd_name, doc or f"Execute `{cmd_name}`."))
-                break
+    for node in functions:
+        for decorator in node.decorator_list:
+            owner_name, decorator_name, explicit_name = _click_decorator_info(decorator)
+            if decorator_name != "command" or owner_name not in group_name_by_function:
+                continue
+            display_name = group_name_by_function[owner_name]
+            cmd_name = explicit_name or _default_command_name(node.name)
+            group_by_display_name[display_name].commands.append(
+                CommandInfo(cmd_name, ast.get_docstring(node) or f"Execute `{cmd_name}`.")
+            )
+            break
     return groups
 
 
@@ -188,7 +213,14 @@ def generate_skill_md_simple(metadata: SkillMetadata) -> str:
     for example in metadata.examples:
         lines.extend([f"### {example.title}", "", example.description, "", "```bash", example.code, "```", ""])
     lines.extend(["## Version", "", metadata.version, ""])
-    return "\n".join(lines)
+    return _normalize_generated_markdown("\n".join(lines))
+
+
+def _normalize_generated_markdown(content: str) -> str:
+    content = re.sub(r"(\|\s*\n)(#{2,3}\s)", r"\1\n\2", content)
+    content = re.sub(r"(```\n)(#{2,3}\s)", r"\1\n\2", content)
+    content = re.sub(r"\n{3,}", "\n\n", content)
+    return content.strip() + "\n"
 
 
 def generate_skill_md(metadata: SkillMetadata, template_path: Optional[str] = None) -> str:
@@ -200,9 +232,9 @@ def generate_skill_md(metadata: SkillMetadata, template_path: Optional[str] = No
     template = Path(template_path) if template_path else Path(__file__).parent / "templates" / "SKILL.md.template"
     if not template.exists():
         return generate_skill_md_simple(metadata)
-    env = Environment(loader=FileSystemLoader(template.parent))
+    env = Environment(loader=FileSystemLoader(template.parent), trim_blocks=True, lstrip_blocks=True)
     tpl = env.get_template(template.name)
-    return tpl.render(
+    rendered = tpl.render(
         skill_name=metadata.skill_name,
         skill_description=metadata.skill_description,
         software_name=metadata.software_name,
@@ -214,6 +246,7 @@ def generate_skill_md(metadata: SkillMetadata, template_path: Optional[str] = No
         ],
         examples=[{"title": ex.title, "description": ex.description, "code": ex.code} for ex in metadata.examples],
     )
+    return _normalize_generated_markdown(rendered)
 
 
 def generate_skill_file(harness_path: str, output_path: Optional[str] = None, template_path: Optional[str] = None) -> str:

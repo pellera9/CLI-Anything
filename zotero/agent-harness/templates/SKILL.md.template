@@ -31,7 +31,7 @@ python -m cli_anything.{{ software_name }}
 
 | Command | Description |
 |---------|-------------|
-{% for cmd in group.commands %}
+{% for cmd in group.commands -%}
 | `{{ cmd.name }}` | {{ cmd.description }} |
 {% endfor %}
 

@@ -51,5 +51,7 @@ class AgentHarnessPackagingTests(unittest.TestCase):
             self.assertIn("## Command Groups", content)
             self.assertIn("### App", content)
             self.assertIn("### Item", content)
+            self.assertIn("### Note", content)
+            self.assertIn("| `add` |", content)
         finally:
             output_path.unlink(missing_ok=True)

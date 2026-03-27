@@ -58,9 +58,11 @@ setup(
         ],
     },
     package_data={
-        "cli_anything.zotero": ["README.md"],
-        "cli_anything.zotero.skills": ["SKILL.md"],
-        "cli_anything.zotero.tests": ["TEST.md"],
+        "cli_anything.zotero": [
+            "README.md",
+            "skills/SKILL.md",
+            "tests/TEST.md",
+        ],
     },
     include_package_data=True,
     zip_safe=False,
