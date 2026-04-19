@@ -83,10 +83,12 @@ subtitle <input.srt> [--translator llm|bing|google] [--target-language CODE] [--
 
 ### synthesize — Burn subtitles into video
 ```
-synthesize <video> -s <subtitle> [--subtitle-mode soft|hard] [--quality ultra|high|medium|low] [-o PATH]
+synthesize <video> -s <subtitle> [--subtitle-mode soft|hard] [--quality ultra|high|medium|low] [-o PATH] [--review-script PATH] [--max-script-diff-ratio FLOAT]
 ```
 - Mirrors the stable backend synthesize surface
 - Subtitle look is controlled by the subtitle asset/backend version, not extra harness flags
+- `--review-script` checks subtitle/script drift before the final export
+- Lower `--max-script-diff-ratio` when copy accuracy matters more than resilience
 
 ### process — Full pipeline
 ```
@@ -129,6 +131,7 @@ cli-anything-videocaptioner --json transcribe video.mp4 --asr bijian
 
 - The upstream backend currently requires Python `>=3.10,<3.13`; prefer Python `3.12` for matrix runs.
 - Advanced synthesize-time style flags are backend-version dependent. Use `styles` to check whether the installed backend exposes them.
+- Compatibility flags such as `layout`, `render_mode`, `style`, `style_override`, and `font_file` should be treated as non-stable unless `styles` and the installed backend confirm they are supported.
 
 ## Target Languages
 
